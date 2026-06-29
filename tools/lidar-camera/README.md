@@ -13,9 +13,59 @@ Tools for extracting camera images and LiDAR point clouds from MCAP bags and pro
 
 | Script | Role |
 |--------|------|
+| `run_workflow.py` | **Run the full pipeline in one command** |
 | `extract_cameras.py` | Extract camera images (JPEG) from MCAP |
 | `extract_lidar_pcd.py` | Extract LiDAR point clouds (PCD) from MCAP |
 | `project_lidar_to_cam.py` | Project LiDAR point clouds onto camera images |
+
+---
+
+## Quick Start: Run the full pipeline
+
+```bash
+python3 run_workflow.py <mcap> [--start <unix_sec>] [--end <unix_sec>] [--distortion-model <model>] [--alpha <float>]
+```
+
+**Arguments:**
+
+| Argument | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `mcap` | ✓ | — | Input MCAP file path |
+| `--start` | | `None` | Start time in Unix seconds |
+| `--end` | | `None` | End time in Unix seconds |
+| `--distortion-model` | | `rational_polynomial` | `rational_polynomial` or `equidistant` |
+| `--alpha` | | `0.45` | Point opacity for projection (0–1) |
+
+**Output** is written to `<mcap_dir>/<mcap_stem>_proj/`:
+
+```
+HRdqo3pf_2026-06-25T17-48-50_pc_proj/
+  camera2/                  ← extracted JPEG frames
+  camera3/
+  camera8/ camera9/ ...
+  lidar_front/              ← extracted PCD frames
+  lidar_left/
+  lidar_rear/
+  lidar_right/
+  proj_camera2/             ← LiDAR-on-camera projection
+    distort/
+    undistort/
+  proj_camera3/
+    distort/
+    undistort/
+```
+
+Projection is run for camera2/3/6/7 only (those with a paired LiDAR).
+Cameras without extracted images are skipped automatically.
+
+**Example:**
+
+```bash
+python3 tools/lidar-camera/run_workflow.py \
+  /path/to/recording.mcap \
+  --start 1782377330 \
+  --end   1782377340
+```
 
 ---
 
