@@ -84,6 +84,8 @@ def main() -> int:
     args = ap.parse_args()
 
     out_root = Path(args.out_root)
+    for name in POINTS_MAP.values():
+        (out_root / name).mkdir(parents=True, exist_ok=True)
     counts = {name: 0 for name in POINTS_MAP.values()}
     collisions = 0
     total = 0

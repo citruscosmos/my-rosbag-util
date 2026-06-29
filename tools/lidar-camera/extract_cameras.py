@@ -33,6 +33,8 @@ def main() -> int:
     CAM_MAP = build_cam_map([int(x) for x in args.cams.split(",")])
 
     out_root = Path(args.out_root)
+    for name in CAM_MAP.values():
+        (out_root / name).mkdir(parents=True, exist_ok=True)
     counts = {name: 0 for name in CAM_MAP.values()}
     collisions = 0
     t0 = time.time()
