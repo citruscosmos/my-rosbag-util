@@ -2,6 +2,7 @@
 import argparse
 import math
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -137,6 +138,10 @@ def main():
             sys.exit(f'Output exists: {args.output}. Use --force to overwrite.')
         output_path.unlink()
 
+    tmp_dir = output_path.with_suffix('.tmp')
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+
     params_dir = Path(args.params)
     camera_infos = load_camera_infos(params_dir)
 
@@ -150,7 +155,7 @@ def main():
         ),
     )
 
-    out_storage = rosbag2_py.StorageOptions(uri=args.output, storage_id='mcap')
+    out_storage = rosbag2_py.StorageOptions(uri=str(tmp_dir), storage_id='mcap')
     if args.compress:
         out_storage.storage_config_yaml = 'compression: zstd'
 
@@ -195,7 +200,15 @@ def main():
 
         writer.write(topic, raw, timestamp)
 
-    print(f'Done: {args.output}', file=sys.stderr)
+    del writer
+
+    mcap_files = list(tmp_dir.glob('*.mcap'))
+    if len(mcap_files) != 1:
+        sys.exit(f'Expected 1 mcap file in {tmp_dir}, found {len(mcap_files)}')
+    mcap_files[0].rename(output_path)
+    shutil.rmtree(tmp_dir)
+
+    print(f'Done: {output_path}', file=sys.stderr)
 
 
 if __name__ == '__main__':
