@@ -35,3 +35,7 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Output directories (extracted images, point clouds, projections)
+output/
+proj_output/
