@@ -1,0 +1,18 @@
+# pip-installable dependencies for tools/lidar-camera/
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# NOTE: rclpy and sensor_msgs are ROS 2 packages and cannot be installed via pip.
+#       They must be available through a sourced ROS 2 environment
+#       (e.g. source /opt/ros/humble/setup.bash).
+
+# Core (all scripts)
+numpy
+opencv-python
+pyyaml
+mcap
+
+# tune_extrinsic.py only
+PySide6
+matplotlib
