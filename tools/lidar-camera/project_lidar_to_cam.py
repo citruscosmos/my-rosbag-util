@@ -22,6 +22,8 @@ import os
 import time
 from pathlib import Path
 
+import yaml
+
 import cv2
 import numpy as np
 
@@ -183,54 +185,57 @@ def _load_camera_info(cam_dir):
     )
 
 
+def _load_tf_yaml(yaml_path, base_dir=None):
+    """multi_tf_static.yaml から CAM_CONFIGS 形式の辞書を生成する。
+
+    YAML 構造: parent_frame -> "cameraN/camera_link" -> {x,y,z,roll,pitch,yaw}
+    lidar_{front,right,rear,left} を親に持つエントリだけを抽出する。
+    """
+    base = base_dir or _BASE
+    with open(yaml_path) as f:
+        data = yaml.safe_load(f)
+
+    lidar_parents = {"lidar_front", "lidar_right", "lidar_rear", "lidar_left"}
+    configs = {}
+    for parent, children in data.items():
+        if parent not in lidar_parents or not isinstance(children, dict):
+            continue
+        for child_key, tf in children.items():
+            if not child_key.endswith("/camera_link"):
+                continue
+            cam_name = child_key[: -len("/camera_link")]
+            configs[cam_name] = {
+                "dir":   f"{base}/{cam_name}",
+                "lidar": f"{base}/{parent}",
+                "t": np.array([tf["x"], tf["y"], tf["z"]]),
+                "q": _rpy_to_q(tf["roll"], tf["pitch"], tf["yaw"]),
+            }
+    return configs
+
+
 def build_undistort(K, D, img_w, img_h, distortion_model, P=None):
     """モデルに応じた (new_K, map1, map2, project_fn) を返す。
 
     project_fn(pts_Nx3) -> uv_Nx2: カメラ座標系の点をピクセル座標へ投影する関数。
-    map1/map2 が None の場合は歪み補正不要(事前補正済み画像)を意味する。
-
-    equidistant カメラで P≈K のとき、画像はドライバ側で補正済み(pinhole)と判定し、
-    fisheye remap を行わず pinhole 投影をそのまま使う。
+    入力画像は常に image_raw を前提とし、常に remap を行う。
     """
     if distortion_model == "equidistant":
         if D.size < 4:
             raise ValueError("equidistant モデルには D が 4 係数以上必要です")
         D4 = D[:4].reshape(4, 1)
 
-        # P (3x4) の 3x3 部分が K と等しい → ドライバが事前に undistort 済みの画像
-        # ROS convention: P は補正後画像の投影行列。P≈K は補正後=元画像を意味する。
-        P3 = P[:, :3] if P is not None else None
-        pre_rectified = (
-            P3 is not None and np.allclose(P3, K, rtol=1e-3, atol=1.0)
-        ) or (
-            P3 is None and np.max(np.abs(D4)) < 0.05
-        )
-        pre_rectified = False
-        if pre_rectified:
-            # 画像はすでに pinhole 投影。remap 不要、K で直接投影する。
-            new_K = K.copy()
-            map1, map2 = None, None
+        new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
+            K, D4, (img_w, img_h), np.eye(3), balance=1.0,
+            new_size=(img_w, img_h))
+        map1, map2 = cv2.fisheye.initUndistortRectifyMap(
+            K, D4, np.eye(3), new_K, (img_w, img_h), cv2.CV_16SC2)
 
-            def project_fn(pts):
-                p = pts.reshape(-1, 3)
-                z = p[:, 2]
-                u = new_K[0, 0] * p[:, 0] / z + new_K[0, 2]
-                v = new_K[1, 1] * p[:, 1] / z + new_K[1, 2]
-                return np.stack([u, v], axis=1)
-        else:
-            new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
-                K, D4, (img_w, img_h), np.eye(3), balance=1.0,
-                new_size=(img_w, img_h))
-            map1, map2 = cv2.fisheye.initUndistortRectifyMap(
-                K, D4, np.eye(3), new_K, (img_w, img_h), cv2.CV_16SC2)
-
-            def project_fn(pts):
-                # fisheye.projectPoints requires (1, N, 3) and (3,1) rvec/tvec
-                obj = pts.reshape(1, -1, 3).astype(np.float64)
-                rvec = np.zeros((3, 1), dtype=np.float64)
-                tvec = np.zeros((3, 1), dtype=np.float64)
-                uv, _ = cv2.fisheye.projectPoints(obj, rvec, tvec, K, D4)
-                return uv.reshape(-1, 2)
+        def project_fn(pts):
+            obj = pts.reshape(1, -1, 3).astype(np.float64)
+            rvec = np.zeros((3, 1), dtype=np.float64)
+            tvec = np.zeros((3, 1), dtype=np.float64)
+            uv, _ = cv2.fisheye.projectPoints(obj, rvec, tvec, K, D4)
+            return uv.reshape(-1, 2)
     else:  # plumb_bob / rational_polynomial
         new_K, _ = cv2.getOptimalNewCameraMatrix(K, D, (img_w, img_h), 1, (img_w, img_h))
         map1, map2 = cv2.initUndistortRectifyMap(
@@ -286,8 +291,8 @@ def draw_points(img, u, v, colors, rad=2, alpha=0.45):
 
 
 def run(cam, out_root, sample, limit, alpha, start_ns, end_ns,
-        cam_dir=None, lidar_dir=None, distortion_model=None):
-    cfg = CAM_CONFIGS[cam]
+        cam_dir=None, lidar_dir=None, distortion_model=None, cam_configs=None):
+    cfg = (cam_configs or CAM_CONFIGS)[cam]
     R_col_lr, t_col_lr = extrinsic_lr_to_optical(cfg)
     cam_dir = cam_dir or cfg["dir"]
     lidar_dir = lidar_dir or cfg["lidar"]
@@ -377,8 +382,21 @@ def run(cam, out_root, sample, limit, alpha, start_ns, end_ns,
 
 
 def main():
+    # --tf-yaml / --base-dir を先読みして cam の choices を動的に決定する
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--tf-yaml", default=None)
+    pre.add_argument("--base-dir", default=None)
+    pre_args, _ = pre.parse_known_args()
+
+    if pre_args.tf_yaml:
+        _cam_configs = _load_tf_yaml(pre_args.tf_yaml, base_dir=pre_args.base_dir)
+        print(f"[proj] tf_yaml loaded: {len(_cam_configs)} cameras from {pre_args.tf_yaml}",
+              flush=True)
+    else:
+        _cam_configs = CAM_CONFIGS
+
     ap = argparse.ArgumentParser()
-    ap.add_argument("cam", choices=sorted(CAM_CONFIGS.keys()))
+    ap.add_argument("cam", choices=sorted(_cam_configs.keys()))
     ap.add_argument("out_root")
     ap.add_argument("--sample", type=int, default=0, help="時間均等にN枚だけ(検証用)")
     ap.add_argument("--limit", type=int, default=0)
@@ -387,12 +405,16 @@ def main():
     ap.add_argument("--start", type=float, default=None, help="開始時刻(UNIX秒)")
     ap.add_argument("--end", type=float, default=None, help="終了時刻(UNIX秒)")
     ap.add_argument("--cam-dir", default=None,
-                    help="カメラ画像ディレクトリ(省略時はCAM_CONFIGSのパスを使用)")
+                    help="カメラ画像ディレクトリ(省略時はconfigのパスを使用)")
     ap.add_argument("--lidar-dir", default=None,
-                    help="LiDAR PCDディレクトリ(省略時はCAM_CONFIGSのパスを使用)")
+                    help="LiDAR PCDディレクトリ(省略時はconfigのパスを使用)")
     ap.add_argument("--distortion-model", default=None,
                     choices=["rational_polynomial", "equidistant"],
                     help="カメラ歪みモデル(省略時はcamera_info.jsonから自動検出)")
+    ap.add_argument("--tf-yaml", default=None,
+                    help="multi_tf_static.yaml から外部パラメータを読み込む(省略時はハードコード値を使用)")
+    ap.add_argument("--base-dir", default=None,
+                    help="カメラ/LiDARデータのベースディレクトリ(--tf-yaml 使用時に適用、デフォルト: {_BASE})")
     args = ap.parse_args()
     start_ns = int(args.start * 1e9) if args.start is not None else None
     end_ns = int(args.end * 1e9) if args.end is not None else None
@@ -401,7 +423,7 @@ def main():
 
     run(args.cam, args.out_root, args.sample, args.limit, args.alpha, start_ns, end_ns,
         cam_dir=args.cam_dir, lidar_dir=args.lidar_dir,
-        distortion_model=args.distortion_model)
+        distortion_model=args.distortion_model, cam_configs=_cam_configs)
 
 
 if __name__ == "__main__":
