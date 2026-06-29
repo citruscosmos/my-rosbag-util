@@ -45,9 +45,9 @@ def main():
     ap.add_argument("mcap", help="入力 MCAP ファイルパス")
     ap.add_argument("--start", type=float, default=None, help="開始時刻 (UNIX 秒)")
     ap.add_argument("--end",   type=float, default=None, help="終了時刻 (UNIX 秒)")
-    ap.add_argument("--distortion-model", default="rational_polynomial",
+    ap.add_argument("--distortion-model", default=None,
                     choices=["rational_polynomial", "equidistant"],
-                    help="カメラ歪みモデル")
+                    help="カメラ歪みモデル強制指定 (省略時は各カメラの camera_info.json から自動検出)")
     ap.add_argument("--alpha", type=float, default=0.45,
                     help="投影点の不透明度 (0~1)")
     args = ap.parse_args()
@@ -99,19 +99,19 @@ def main():
             print(f"[workflow] skip: {cam} ({lidar_name} PCD なし)", flush=True)
             continue
 
+        dm_opts = ["--distortion-model", args.distortion_model] if args.distortion_model else []
         run_step(
             [sys.executable, SCRIPT_DIR / "project_lidar_to_cam.py",
              cam, str(proj_dir / f"proj_{cam}"),
-             "--cam-dir",          str(cam_dir),
-             "--lidar-dir",        str(lidar_dir),
-             "--distortion-model", args.distortion_model,
-             "--alpha",            str(args.alpha)] + ts_opts,
+             "--cam-dir",   str(cam_dir),
+             "--lidar-dir", str(lidar_dir),
+             "--alpha",     str(args.alpha)] + dm_opts + ts_opts,
             f"Step 3/3: LiDAR→カメラ投影 ({cam})",
         )
         projected += 1
 
     if projected == 0:
-        print("[workflow] 警告: 投影対象カメラ (camera2/3/6/7) のデータが見つかりませんでした",
+        print("[workflow] 警告: 投影対象カメラのデータが見つかりませんでした",
               flush=True)
 
     print(f"\n[workflow] 完了 -> {proj_dir}", flush=True)

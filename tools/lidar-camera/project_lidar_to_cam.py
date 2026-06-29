@@ -165,39 +165,72 @@ def extrinsic_lr_to_optical(cam_cfg):
 
 
 def _load_camera_info(cam_dir):
-    """cam_dir/camera_info.json から (K, D, w, h, model) を返す。なければ None。"""
+    """cam_dir/camera_info.json から (K, D, w, h, model, P) を返す。なければ None。"""
     path = Path(cam_dir) / "camera_info.json"
     if not path.exists():
         return None
     with open(path) as f:
         info = json.load(f)
+    P_raw = info.get("P")
+    P = np.array(P_raw, dtype=np.float64) if P_raw is not None else None  # 3x4 or None
     return (
         np.array(info["K"], dtype=np.float64),
         np.array(info["D"], dtype=np.float64),
         info["width"],
         info["height"],
         info["distortion_model"],
+        P,
     )
 
 
-def build_undistort(K, D, img_w, img_h, distortion_model):
+def build_undistort(K, D, img_w, img_h, distortion_model, P=None):
     """モデルに応じた (new_K, map1, map2, project_fn) を返す。
 
     project_fn(pts_Nx3) -> uv_Nx2: カメラ座標系の点をピクセル座標へ投影する関数。
+    map1/map2 が None の場合は歪み補正不要(事前補正済み画像)を意味する。
+
+    equidistant カメラで P≈K のとき、画像はドライバ側で補正済み(pinhole)と判定し、
+    fisheye remap を行わず pinhole 投影をそのまま使う。
     """
     if distortion_model == "equidistant":
         if D.size < 4:
             raise ValueError("equidistant モデルには D が 4 係数以上必要です")
         D4 = D[:4].reshape(4, 1)
-        new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
-            K, D4, (img_w, img_h), np.eye(3), balance=1.0)
-        map1, map2 = cv2.fisheye.initUndistortRectifyMap(
-            K, D4, np.eye(3), new_K, (img_w, img_h), cv2.CV_16SC2)
 
-        def project_fn(pts):
-            uv, _ = cv2.fisheye.projectPoints(
-                pts.reshape(-1, 1, 3), np.zeros(3), np.zeros(3), K, D4)
-            return uv.reshape(-1, 2)
+        # P (3x4) の 3x3 部分が K と等しい → ドライバが事前に undistort 済みの画像
+        # ROS convention: P は補正後画像の投影行列。P≈K は補正後=元画像を意味する。
+        P3 = P[:, :3] if P is not None else None
+        pre_rectified = (
+            P3 is not None and np.allclose(P3, K, rtol=1e-3, atol=1.0)
+        ) or (
+            P3 is None and np.max(np.abs(D4)) < 0.05
+        )
+        pre_rectified = False
+        if pre_rectified:
+            # 画像はすでに pinhole 投影。remap 不要、K で直接投影する。
+            new_K = K.copy()
+            map1, map2 = None, None
+
+            def project_fn(pts):
+                p = pts.reshape(-1, 3)
+                z = p[:, 2]
+                u = new_K[0, 0] * p[:, 0] / z + new_K[0, 2]
+                v = new_K[1, 1] * p[:, 1] / z + new_K[1, 2]
+                return np.stack([u, v], axis=1)
+        else:
+            new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
+                K, D4, (img_w, img_h), np.eye(3), balance=1.0,
+                new_size=(img_w, img_h))
+            map1, map2 = cv2.fisheye.initUndistortRectifyMap(
+                K, D4, np.eye(3), new_K, (img_w, img_h), cv2.CV_16SC2)
+
+            def project_fn(pts):
+                # fisheye.projectPoints requires (1, N, 3) and (3,1) rvec/tvec
+                obj = pts.reshape(1, -1, 3).astype(np.float64)
+                rvec = np.zeros((3, 1), dtype=np.float64)
+                tvec = np.zeros((3, 1), dtype=np.float64)
+                uv, _ = cv2.fisheye.projectPoints(obj, rvec, tvec, K, D4)
+                return uv.reshape(-1, 2)
     else:  # plumb_bob / rational_polynomial
         new_K, _ = cv2.getOptimalNewCameraMatrix(K, D, (img_w, img_h), 1, (img_w, img_h))
         map1, map2 = cv2.initUndistortRectifyMap(
@@ -262,17 +295,18 @@ def run(cam, out_root, sample, limit, alpha, start_ns, end_ns,
     # camera_info.json があればカメラ固有の intrinsics を使用
     cam_info = _load_camera_info(cam_dir)
     if cam_info is not None:
-        _K, _D, _W, _H, info_model = cam_info
+        _K, _D, _W, _H, info_model, _P = cam_info
         _model = distortion_model or info_model
         print(f"[proj] camera_info loaded: {_W}x{_H} model={info_model}"
               + (f" (overridden -> {_model})" if distortion_model else ""), flush=True)
     else:
         _K, _D, _W, _H = _DEFAULT_K, _DEFAULT_D, _DEFAULT_W, _DEFAULT_H
         _model = distortion_model or _DEFAULT_MODEL
+        _P = None
         print(f"[proj] camera_info not found, using default intrinsics "
               f"(model={_model})", flush=True)
 
-    new_K, map1, map2, project_fn = build_undistort(_K, _D, _W, _H, _model)
+    new_K, map1, map2, project_fn = build_undistort(_K, _D, _W, _H, _model, P=_P)
     nfx, nfy = new_K[0, 0], new_K[1, 1]
     ncx, ncy = new_K[0, 2], new_K[1, 2]
 
@@ -325,7 +359,7 @@ def run(cam, out_root, sample, limit, alpha, start_ns, end_ns,
             draw_points(img_di, uv[:, 0], uv[:, 1], colors, alpha=alpha)
 
         # --- undistort: 歪み補正画像 + ピンホール投影(newK) ---
-        img_un = cv2.remap(img, map1, map2, cv2.INTER_LINEAR)
+        img_un = cv2.remap(img, map1, map2, cv2.INTER_LINEAR) if map1 is not None else img.copy()
         if p_col.shape[0] > 0:
             u = nfx * p_col[:, 0] / p_col[:, 2] + ncx
             v = nfy * p_col[:, 1] / p_col[:, 2] + ncy

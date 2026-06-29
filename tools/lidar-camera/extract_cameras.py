@@ -59,6 +59,8 @@ def extract_camera_infos(mcap_path, cam_names, out_root):
                 "height":           msg.height,
                 "K":                np.array(msg.k).reshape(3, 3).tolist(),
                 "D":                list(msg.d),
+                "R":                np.array(msg.r).reshape(3, 3).tolist(),
+                "P":                np.array(msg.p).reshape(3, 4).tolist(),
                 "distortion_model": msg.distortion_model,
             }
             dst = out_root / name / "camera_info.json"
