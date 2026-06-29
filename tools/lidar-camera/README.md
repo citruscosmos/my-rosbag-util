@@ -45,7 +45,7 @@ python3 extract_cameras.py <mcap> <out_root> [--cams <camera IDs>] [--limit <N>]
 |----------|----------|---------|-------------|
 | `mcap` | ✓ | — | Input MCAP file path |
 | `out_root` | ✓ | — | Output root directory |
-| `--cams` | | `8,9,10,11` | Comma-separated camera IDs to extract |
+| `--cams` | | auto-detect | Comma-separated camera IDs to extract; omit to use all cameras found in the MCAP |
 | `--limit` | | `0` (unlimited) | Maximum frames per camera |
 | `--start` | | `None` | Start time in Unix seconds (e.g. `1751234567.0`) |
 | `--end` | | `None` | End time in Unix seconds |

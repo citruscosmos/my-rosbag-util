@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""MCAP の camera8-11 CompressedImage(jpeg) を sensor 別ディレクトリに JPG 保存する。
+"""MCAP の CompressedImage(jpeg) を sensor 別ディレクトリに JPG 保存する。
 
 ファイル名は header.stamp のナノ秒(エポック)。 {sec}{nanosec:09d}.jpg
+--cams 未指定時は MCAP 内の全カメラトピックを自動検出する。
 """
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -12,6 +14,9 @@ from mcap.reader import make_reader
 from rclpy.serialization import deserialize_message
 from sensor_msgs.msg import CompressedImage
 
+_CAM_TOPIC_RE = re.compile(r"^/sensing/camera/(camera\d+)/image_raw/compressed$")
+
+
 def build_cam_map(cam_ids):
     return {
         f"/sensing/camera/camera{i}/image_raw/compressed": f"camera{i}"
@@ -19,23 +24,43 @@ def build_cam_map(cam_ids):
     }
 
 
+def discover_cam_map(mcap_path):
+    """MCAP のチャンネル一覧からカメラトピックを自動検出して cam_map を返す。"""
+    with open(mcap_path, "rb") as f:
+        summary = make_reader(f).get_summary()
+    cam_map = {}
+    if summary:
+        for ch in summary.channels.values():
+            m = _CAM_TOPIC_RE.match(ch.topic)
+            if m:
+                cam_map[ch.topic] = m.group(1)
+    return cam_map
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("mcap")
     ap.add_argument("out_root")
-    ap.add_argument("--cams", default="8,9,10,11", help="カメラ番号(カンマ区切り)")
+    ap.add_argument("--cams", default=None,
+                    help="カメラ番号(カンマ区切り)。省略時はMCAP内の全カメラを自動検出")
     ap.add_argument("--limit", type=int, default=0, help="各カメラ最大枚数(0=無制限/検証用)")
     ap.add_argument("--start", type=float, default=None, help="開始時刻(UNIX秒)")
     ap.add_argument("--end", type=float, default=None, help="終了時刻(UNIX秒)")
     args = ap.parse_args()
 
-    global CAM_MAP
-    CAM_MAP = build_cam_map([int(x) for x in args.cams.split(",")])
+    if args.cams is not None:
+        cam_map = build_cam_map([int(x) for x in args.cams.split(",")])
+    else:
+        cam_map = discover_cam_map(args.mcap)
+        if not cam_map:
+            print("[cam] ERROR: no camera topics found in MCAP", file=sys.stderr)
+            return 1
+        print(f"[cam] auto-detected cameras: {sorted(cam_map.values())}", flush=True)
 
     out_root = Path(args.out_root)
-    for name in CAM_MAP.values():
+    for name in cam_map.values():
         (out_root / name).mkdir(parents=True, exist_ok=True)
-    counts = {name: 0 for name in CAM_MAP.values()}
+    counts = {name: 0 for name in cam_map.values()}
     collisions = 0
     t0 = time.time()
     total = 0
@@ -46,13 +71,12 @@ def main() -> int:
     with open(args.mcap, "rb") as f:
         reader = make_reader(f)
         for _schema, channel, message in reader.iter_messages(
-                topics=list(CAM_MAP.keys()), start_time=start_ns, end_time=end_ns):
-            name = CAM_MAP.get(channel.topic)
+                topics=list(cam_map.keys()), start_time=start_ns, end_time=end_ns):
+            name = cam_map.get(channel.topic)
             if name is None:
                 continue
             if args.limit and counts[name] >= args.limit:
-                # 全カメラが上限に達したら終了
-                if all(counts[n] >= args.limit for n in CAM_MAP.values()):
+                if all(counts[n] >= args.limit for n in cam_map.values()):
                     break
                 continue
             msg = deserialize_message(message.data, CompressedImage)
