@@ -155,9 +155,10 @@ def main():
         ),
     )
 
-    out_storage = rosbag2_py.StorageOptions(uri=str(tmp_dir), storage_id='mcap')
-    if args.compress:
-        out_storage.storage_config_yaml = 'compression: zstd'
+    preset = 'zstd_fast' if args.compress else 'none'
+    out_storage = rosbag2_py.StorageOptions(
+        uri=str(tmp_dir), storage_id='mcap', storage_preset_profile=preset
+    )
 
     writer = rosbag2_py.SequentialWriter()
     writer.open(
