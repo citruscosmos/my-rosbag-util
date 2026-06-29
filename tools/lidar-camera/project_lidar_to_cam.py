@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LiDAR 点群をカメラ画像へ投影する。
+"""LiDAR 点群をカメラ画像へ投影する。(camera0–11 対応)
 
 2 パターン出力:
   - undistort/ : 画像を歪み補正 -> ピンホール投影(新カメラ行列 newK)で点を重畳
@@ -35,35 +35,97 @@ D = np.array([0.929988205433, 0.165922805667, -0.000024369263, -0.000013859207,
 IMG_W, IMG_H = 2880, 1860
 
 # ---- 外部パラメータ (/tf_static より): lidarX -> cameraN/camera_link ----
-# 各カメラはペアとなる lidar を持つ(camera2,3->lidar_right / camera6,7->lidar_left)
+# RPY (rad) -> quaternion (x,y,z,w) 変換: ZYX extrinsic 規約
+def _rpy_to_q(roll, pitch, yaw):
+    cr, sr = np.cos(roll / 2),  np.sin(roll / 2)
+    cp, sp = np.cos(pitch / 2), np.sin(pitch / 2)
+    cy, sy = np.cos(yaw / 2),   np.sin(yaw / 2)
+    return np.array([
+        sr * cp * cy - cr * sp * sy,
+        cr * sp * cy + sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+        cr * cp * cy + sr * sp * sy,
+    ])
+
+
+_BASE = "/data/ssd2/calib_dump"
+
 CAM_CONFIGS = {
+    # lidar_front ペア
+    "camera0": {
+        "dir":   f"{_BASE}/camera0",
+        "lidar": f"{_BASE}/lidar_front",
+        "t": np.array([-0.017608,  0.026447, -0.084288]),
+        "q": _rpy_to_q(-0.001498,  0.000024,  0.007782),
+    },
+    "camera1": {
+        "dir":   f"{_BASE}/camera1",
+        "lidar": f"{_BASE}/lidar_front",
+        "t": np.array([ 0.088317, -0.025023, -0.098224]),
+        "q": _rpy_to_q(-0.002738, -0.001877,  0.007352),
+    },
+    "camera8": {
+        "dir":   f"{_BASE}/camera8",
+        "lidar": f"{_BASE}/lidar_front",
+        "t": np.array([ 2.544210,  0.023070, -1.455230]),
+        "q": _rpy_to_q(-0.015700,  0.514310, -0.026270),
+    },
+    # lidar_right ペア
     "camera2": {
-        "dir": "/data/ssd2/calib_dump/camera2",
-        "lidar": "/data/ssd2/calib_dump/lidar_right",
-        "t": np.array([0.029606, 0.108714, -0.064901]),
-        "q": np.array([-0.04528721558963694, 0.2107157777742464,
-                       0.23086129675254347, 0.9488155725760757]),  # x,y,z,w
+        "dir":   f"{_BASE}/camera2",
+        "lidar": f"{_BASE}/lidar_right",
+        "t": np.array([ 0.029606,  0.108714, -0.064901]),
+        "q": _rpy_to_q( 0.012516,  0.434295,  0.480116),
     },
     "camera3": {
-        "dir": "/data/ssd2/calib_dump/camera3",
-        "lidar": "/data/ssd2/calib_dump/lidar_right",
-        "t": np.array([0.022396, -0.129673, -0.061051]),
-        "q": np.array([0.06580402306228364, 0.21997435190097678,
-                       -0.2450469434952197, 0.941930523201268]),  # x,y,z,w
+        "dir":   f"{_BASE}/camera3",
+        "lidar": f"{_BASE}/lidar_right",
+        "t": np.array([ 0.022396, -0.129673, -0.061051]),
+        "q": _rpy_to_q( 0.018060,  0.463019, -0.504767),
     },
+    "camera9": {
+        "dir":   f"{_BASE}/camera9",
+        "lidar": f"{_BASE}/lidar_right",
+        "t": np.array([ 0.259260,  1.942450, -1.059810]),
+        "q": _rpy_to_q(-0.021740,  0.456320, -0.014260),
+    },
+    # lidar_rear ペア
+    "camera4": {
+        "dir":   f"{_BASE}/camera4",
+        "lidar": f"{_BASE}/lidar_rear",
+        "t": np.array([ 0.038273,  0.030474, -0.097639]),
+        "q": _rpy_to_q( 0.004094, -0.004286, -0.008806),
+    },
+    "camera5": {
+        "dir":   f"{_BASE}/camera5",
+        "lidar": f"{_BASE}/lidar_rear",
+        "t": np.array([ 0.120238, -0.026997, -0.095939]),
+        "q": _rpy_to_q(-0.005269, -0.003393, -0.006281),
+    },
+    "camera10": {
+        "dir":   f"{_BASE}/camera10",
+        "lidar": f"{_BASE}/lidar_rear",
+        "t": np.array([ 1.180760,  0.005190, -0.923770]),
+        "q": _rpy_to_q(-0.002840,  0.268340,  0.003090),
+    },
+    # lidar_left ペア
     "camera6": {
-        "dir": "/data/ssd2/calib_dump/camera6",
-        "lidar": "/data/ssd2/calib_dump/lidar_left",
-        "t": np.array([0.025694, 0.115418, -0.066878]),
-        "q": np.array([-0.05278484897985, 0.22152895632862807,
-                       0.24080899743044448, 0.943477454941382]),  # x,y,z,w
+        "dir":   f"{_BASE}/camera6",
+        "lidar": f"{_BASE}/lidar_left",
+        "t": np.array([ 0.025694,  0.115418, -0.066878]),
+        "q": _rpy_to_q( 0.007910,  0.459430,  0.501650),
     },
     "camera7": {
-        "dir": "/data/ssd2/calib_dump/camera7",
-        "lidar": "/data/ssd2/calib_dump/lidar_left",
-        "t": np.array([0.01959, -0.124525, -0.065413]),
-        "q": np.array([0.05926300354961544, 0.2182008250684628,
-                       -0.24088391677898185, 0.943849159022212]),  # x,y,z,w
+        "dir":   f"{_BASE}/camera7",
+        "lidar": f"{_BASE}/lidar_left",
+        "t": np.array([ 0.019590, -0.124525, -0.065413]),
+        "q": _rpy_to_q( 0.007517,  0.456098, -0.498016),
+    },
+    "camera11": {
+        "dir":   f"{_BASE}/camera11",
+        "lidar": f"{_BASE}/lidar_left",
+        "t": np.array([ 0.280710, -1.928760, -1.079930]),
+        "q": _rpy_to_q( 0.006410,  0.446770,  0.033720),
     },
 }
 # camera_link -> camera_optical_link (全カメラ共通)
