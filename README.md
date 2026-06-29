@@ -50,6 +50,19 @@ Local reference: `~/data_recording_system/src/individual_params/config/default/`
 - Camera topics with no matching config entry: passed through unchanged with a warning on stderr.
 - All other topics: passed through unchanged.
 
+#### Processing multiple files
+
+Use a shell loop to convert all MCAP files in a directory:
+
+```bash
+for f in /path/to/input/*.mcap; do
+    python3 tools/replace_params.py \
+        --input  "$f" \
+        --output "/path/to/output/$(basename "$f")" \
+        --params /opt/drs/config/params/default
+done
+```
+
 #### Dependencies
 
 Requires a ROS 2 Humble environment.
@@ -62,6 +75,27 @@ tf2_msgs
 geometry_msgs
 builtin_interfaces
 pyyaml
+```
+
+## Installation
+
+1. Source your ROS 2 Humble workspace:
+
+```bash
+source /opt/ros/humble/setup.bash
+```
+
+2. Install the Python dependency:
+
+```bash
+pip install pyyaml
+```
+
+3. Clone this repository:
+
+```bash
+git clone https://github.com/citruscosmos/my-rosbag-util.git
+cd my-rosbag-util
 ```
 
 ## Tests
