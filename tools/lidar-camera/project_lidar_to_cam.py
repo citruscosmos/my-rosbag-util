@@ -141,7 +141,7 @@ def draw_points(img, u, v, colors, rad=2, alpha=0.45):
     return img
 
 
-def run(cam, out_root, sample, limit, alpha):
+def run(cam, out_root, sample, limit, alpha, start_ns, end_ns):
     cfg = CAM_CONFIGS[cam]
     R_col_lr, t_col_lr = extrinsic_lr_to_optical(cfg)
     cam_dir = cfg["dir"]
@@ -150,6 +150,15 @@ def run(cam, out_root, sample, limit, alpha):
     cam_ts = np.array([int(os.path.basename(p).split('.')[0]) for p in cam_files])
     lidar_files = sorted(glob.glob(f"{cfg['lidar']}/*.pcd"))
     lidar_ts = np.array([int(os.path.basename(p).split('.')[0]) for p in lidar_files])
+
+    if start_ns is not None:
+        mask = lidar_ts >= start_ns
+        lidar_files = [f for f, m in zip(lidar_files, mask) if m]
+        lidar_ts = lidar_ts[mask]
+    if end_ns is not None:
+        mask = lidar_ts <= end_ns
+        lidar_files = [f for f, m in zip(lidar_files, mask) if m]
+        lidar_ts = lidar_ts[mask]
 
     idxs = list(range(len(lidar_files)))
     if sample:
@@ -215,9 +224,13 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--alpha", type=float, default=0.45,
                     help="点の不透明度(0~1)。小さいほど背景が透ける")
+    ap.add_argument("--start", type=float, default=None, help="開始時刻(UNIX秒)")
+    ap.add_argument("--end", type=float, default=None, help="終了時刻(UNIX秒)")
     args = ap.parse_args()
+    start_ns = int(args.start * 1e9) if args.start is not None else None
+    end_ns = int(args.end * 1e9) if args.end is not None else None
     print(f"cam={args.cam} alpha={args.alpha}\nNEW_K(alpha=1)=\n{NEW_K}", flush=True)
-    run(args.cam, args.out_root, args.sample, args.limit, args.alpha)
+    run(args.cam, args.out_root, args.sample, args.limit, args.alpha, start_ns, end_ns)
 
 
 if __name__ == "__main__":

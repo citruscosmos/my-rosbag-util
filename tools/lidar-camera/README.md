@@ -47,6 +47,8 @@ python3 extract_cameras.py <mcap> <out_root> [--cams <camera IDs>] [--limit <N>]
 | `out_root` | ✓ | — | Output root directory |
 | `--cams` | | `8,9,10,11` | Comma-separated camera IDs to extract |
 | `--limit` | | `0` (unlimited) | Maximum frames per camera |
+| `--start` | | `None` | Start time in Unix seconds (e.g. `1751234567.0`) |
+| `--end` | | `None` | End time in Unix seconds |
 
 **Topics:** `/sensing/camera/camera{N}/image_raw/compressed`
 
@@ -91,6 +93,8 @@ python3 extract_lidar_pcd.py <mcap> <out_root> [--limit <N>]
 | `mcap` | ✓ | — | Input MCAP file path |
 | `out_root` | ✓ | — | Output root directory |
 | `--limit` | | `0` (unlimited) | Maximum frames per LiDAR |
+| `--start` | | `None` | Start time in Unix seconds (e.g. `1751234567.0`) |
+| `--end` | | `None` | End time in Unix seconds |
 
 **Topics:**
 
@@ -146,6 +150,8 @@ python3 project_lidar_to_cam.py <cam> <out_root> [--sample <N>] [--limit <N>] [-
 | `--sample` | | `0` (disabled) | Process N evenly-spaced frames (for validation) |
 | `--limit` | | `0` (unlimited) | Stop after N frames from the beginning |
 | `--alpha` | | `0.45` | Point opacity (0 = fully transparent, 1 = opaque) |
+| `--start` | | `None` | Start time in Unix seconds (e.g. `1751234567.0`) |
+| `--end` | | `None` | End time in Unix seconds |
 
 **Camera–LiDAR pairs:**
 
@@ -210,6 +216,5 @@ sample.mcap
 
 ## Known Limitations
 
-- Timestamp range filtering (`--start` / `--end`) is not implemented; the entire MCAP is processed.
 - Input directory paths in `project_lidar_to_cam.py` are hardcoded in `CAM_CONFIGS`.
 - Camera intrinsics are shared across all cameras (camera2 values are reused for camera3, 6, and 7).

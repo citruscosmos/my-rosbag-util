@@ -79,6 +79,8 @@ def main() -> int:
     ap.add_argument("mcap")
     ap.add_argument("out_root")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--start", type=float, default=None, help="開始時刻(UNIX秒)")
+    ap.add_argument("--end", type=float, default=None, help="終了時刻(UNIX秒)")
     args = ap.parse_args()
 
     out_root = Path(args.out_root)
@@ -87,9 +89,13 @@ def main() -> int:
     total = 0
     t0 = time.time()
 
+    start_ns = int(args.start * 1e9) if args.start is not None else None
+    end_ns = int(args.end * 1e9) if args.end is not None else None
+
     with open(args.mcap, "rb") as f:
         reader = make_reader(f)
-        for _schema, channel, message in reader.iter_messages(topics=list(POINTS_MAP.keys())):
+        for _schema, channel, message in reader.iter_messages(
+                topics=list(POINTS_MAP.keys()), start_time=start_ns, end_time=end_ns):
             name = POINTS_MAP.get(channel.topic)
             if name is None:
                 continue

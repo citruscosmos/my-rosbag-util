@@ -25,6 +25,8 @@ def main() -> int:
     ap.add_argument("out_root")
     ap.add_argument("--cams", default="8,9,10,11", help="カメラ番号(カンマ区切り)")
     ap.add_argument("--limit", type=int, default=0, help="各カメラ最大枚数(0=無制限/検証用)")
+    ap.add_argument("--start", type=float, default=None, help="開始時刻(UNIX秒)")
+    ap.add_argument("--end", type=float, default=None, help="終了時刻(UNIX秒)")
     args = ap.parse_args()
 
     global CAM_MAP
@@ -36,9 +38,13 @@ def main() -> int:
     t0 = time.time()
     total = 0
 
+    start_ns = int(args.start * 1e9) if args.start is not None else None
+    end_ns = int(args.end * 1e9) if args.end is not None else None
+
     with open(args.mcap, "rb") as f:
         reader = make_reader(f)
-        for _schema, channel, message in reader.iter_messages(topics=list(CAM_MAP.keys())):
+        for _schema, channel, message in reader.iter_messages(
+                topics=list(CAM_MAP.keys()), start_time=start_ns, end_time=end_ns):
             name = CAM_MAP.get(channel.topic)
             if name is None:
                 continue
