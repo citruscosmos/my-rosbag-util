@@ -161,7 +161,7 @@ class TunerWindow(QtWidgets.QMainWindow):
 
         self.color_mode = "intensity" if intensity is not None else "depth"
         self.pt_size    = 4
-        self.pt_alpha   = 0.7
+        self.pt_alpha   = 0.3
         self.depth_min  = -6.0
         self.depth_max  = 30.0
 
@@ -250,7 +250,7 @@ class TunerWindow(QtWidgets.QMainWindow):
 
         disp_specs = [
             ("size",  1,    30,  4,   lambda v: str(v)),
-            ("alpha", 1,   100, 70,   lambda v: f"{v/100:.2f}"),
+            ("alpha", 1,   100, 30,   lambda v: f"{v/100:.2f}"),
             ("c min", -100, 300, -6,  lambda v: str(v)),
             ("c max", -100, 300, 30,  lambda v: str(v)),
         ]
