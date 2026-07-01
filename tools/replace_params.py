@@ -123,7 +123,7 @@ def main():
         description='Replace /tf_static and camera_info payloads in an MCAP bag with calibration data.'
     )
     parser.add_argument('--input', required=True, help='Input bag path (.mcap)')
-    parser.add_argument('--output', required=True, help='Output bag path (.mcap)')
+    parser.add_argument('--output', default=None, help='Output bag path (.mcap, default: <input>_replaced.mcap)')
     parser.add_argument(
         '--params', required=True,
         help='Config directory containing multi_tf_static.yaml and camera*/camera_info.yaml',
@@ -131,6 +131,10 @@ def main():
     parser.add_argument('--force', action='store_true', help='Overwrite output if it exists')
     parser.add_argument('--compress', action='store_true', help='Compress output with zstd')
     args = parser.parse_args()
+
+    if args.output is None:
+        inp = Path(args.input)
+        args.output = str(inp.parent / (inp.stem + '_replaced.mcap'))
 
     output_path = Path(args.output)
     if output_path.exists():

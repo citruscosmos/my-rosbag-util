@@ -319,7 +319,7 @@ def color_by_intensity(inten):
     return cm  # BGR
 
 
-def draw_points(img, u, v, colors, rad=2, alpha=0.45):
+def draw_points(img, u, v, colors, rad=1, alpha=0.45):
     """点を alpha 合成で重畳(背景画像が透けて見えるように)。
     overlay+mask 方式なので、点が重なる画素でも透過率は一定になる。
     alpha=1.0 で不透明、小さいほど背景がよく見える。"""
