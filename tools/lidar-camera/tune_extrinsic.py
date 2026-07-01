@@ -234,6 +234,9 @@ class TunerWindow(QtWidgets.QMainWindow):
         color_row.addWidget(self._radio_depth)
         color_row.addStretch()
         panel.addLayout(color_row)
+        self._color_btn_group = QtWidgets.QButtonGroup(self)
+        self._color_btn_group.addButton(self._radio_inten)
+        self._color_btn_group.addButton(self._radio_depth)
 
         disp_specs = [
             ("size",  1,    30,  4,   lambda v: str(v)),
@@ -272,6 +275,9 @@ class TunerWindow(QtWidgets.QMainWindow):
         submode_row.addWidget(self._radio_match)
         submode_row.addWidget(self._radio_mismatch)
         panel.addLayout(submode_row)
+        self._submode_btn_group = QtWidgets.QButtonGroup(self)
+        self._submode_btn_group.addButton(self._radio_match)
+        self._submode_btn_group.addButton(self._radio_mismatch)
 
         self.pair_label = QtWidgets.QLabel("ペア数: 0")
         panel.addWidget(self.pair_label)

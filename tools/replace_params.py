@@ -173,6 +173,7 @@ def main():
         writer.create_topic(topic)
 
     warned_cameras = set()
+    tf_count = 0
 
     while reader.has_next():
         topic, raw, timestamp = reader.read_next()
@@ -180,6 +181,7 @@ def main():
         if topic == '/tf_static':
             tf_msg = load_tf_message(params_dir, timestamp)
             writer.write(topic, serialize_message(tf_msg), timestamp)
+            tf_count += 1
             continue
 
         m = CAMERA_INFO_RE.match(topic)
@@ -202,6 +204,12 @@ def main():
         writer.write(topic, raw, timestamp)
 
     del writer
+
+    if tf_count == 0:
+        print(
+            'Warning: no /tf_static messages found in the input bag — TF was NOT updated.',
+            file=sys.stderr,
+        )
 
     mcap_files = list(tmp_dir.glob('*.mcap'))
     if len(mcap_files) != 1:

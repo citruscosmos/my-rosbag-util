@@ -503,3 +503,34 @@ class TestConfigHasCameraBagDoesNot:
         # camera1 and camera2 are in config but not in bag — must NOT appear in output
         assert '/sensing/camera/camera1/camera_info' not in topics
         assert '/sensing/camera/camera2/camera_info' not in topics
+
+
+# ── Test 6: No /tf_static in bag → warning ────────────────────────────────────
+
+class TestNoTfStaticInBag:
+    def test_warns_when_no_tf_static_messages(self, tmp_path, params_dir):
+        """If the bag has no /tf_static messages, a clear warning must be printed."""
+        bag_path = tmp_path / 'no_tf.mcap'
+        write_bag(bag_path, [
+            ('/sensing/camera/camera0/camera_info', 'sensor_msgs/msg/CameraInfo',
+             make_camera_info_raw('camera0_optical_frame'), 1_000_000_000),
+        ])
+
+        output = tmp_path / 'out.mcap'
+        result = run_replace(bag_path, output, params_dir)
+        assert result.returncode == 0, result.stderr
+        assert 'tf_static' in result.stderr.lower() and 'not updated' in result.stderr.lower(), (
+            f'Expected a /tf_static warning in stderr; got: {result.stderr!r}'
+        )
+
+    def test_succeeds_even_without_tf_static(self, tmp_path, params_dir):
+        """Tool must exit 0 even when no /tf_static messages are present."""
+        bag_path = tmp_path / 'no_tf.mcap'
+        write_bag(bag_path, [
+            ('/sensing/camera/camera0/camera_info', 'sensor_msgs/msg/CameraInfo',
+             make_camera_info_raw('camera0_optical_frame'), 1_000_000_000),
+        ])
+
+        output = tmp_path / 'out.mcap'
+        result = run_replace(bag_path, output, params_dir)
+        assert result.returncode == 0
