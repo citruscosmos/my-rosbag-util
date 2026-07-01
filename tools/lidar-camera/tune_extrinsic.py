@@ -104,9 +104,11 @@ def T_col_lr_to_lr_cl(T_col_lr):
 # ----------------------------------------------------------------------------
 # 投影
 # ----------------------------------------------------------------------------
-def project(points_lidar, T_cam_lidar, K):
+def project(points_lidar, T_cam_lidar, K, project_fn=None):
     """LiDAR点(Nx3) を画像へ投影。前方(z>0.001)のみ。
 
+    project_fn: 歪みモデル投影関数 (Nx3 カメラ座標 -> Nx2 画素)。
+                None の場合はピンホール投影 (K を使用)。
     Returns: uv (Mx2), depth (M,), idx (M,) — 元配列インデックス。
     """
     Xc   = (T_cam_lidar[:3, :3] @ points_lidar.T + T_cam_lidar[:3, 3:4]).T
@@ -114,8 +116,11 @@ def project(points_lidar, T_cam_lidar, K):
     Xc, idx = Xc[front], np.nonzero(front)[0]
     if Xc.shape[0] == 0:
         return np.empty((0, 2)), np.empty((0,)), np.empty((0,), dtype=int)
-    uvw = (K @ Xc.T).T
-    uv  = uvw[:, :2] / uvw[:, 2:3]
+    if project_fn is not None:
+        uv = project_fn(Xc)
+    else:
+        uvw = (K @ Xc.T).T
+        uv  = uvw[:, :2] / uvw[:, 2:3]
     return uv, Xc[:, 2], idx
 
 
@@ -129,9 +134,11 @@ class TunerWindow(QtWidgets.QMainWindow):
     ROT_STEP    = np.deg2rad(0.02)  # 0.02 deg
 
     def __init__(self, image, points, K, init_T, out_path,
-                 lidar_frame="lidar", cam_frame="camera", intensity=None):
+                 lidar_frame="lidar", cam_frame="camera", intensity=None,
+                 D=None, distortion_model="rational_polynomial", project_fn=None):
         super().__init__()
-        self.setWindowTitle("LiDAR-Camera Extrinsic Tuner")
+        mode = "distort" if project_fn is not None else "undistort"
+        self.setWindowTitle(f"LiDAR-Camera Extrinsic Tuner [{mode}]")
 
         self.image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) if image.ndim == 3 else image
         self.h, self.w = self.image.shape[:2]
@@ -140,9 +147,12 @@ class TunerWindow(QtWidgets.QMainWindow):
         self.K         = K.astype(np.float64)
         self.T         = init_T.copy()
         self.base_T    = init_T.copy()
-        self.out_path    = out_path
-        self.lidar_frame = lidar_frame
-        self.cam_frame   = cam_frame
+        self.out_path          = out_path
+        self.lidar_frame       = lidar_frame
+        self.cam_frame         = cam_frame
+        self.D                 = D
+        self.distortion_model  = distortion_model
+        self.project_fn        = project_fn
 
         self.pairs        = []
         self.pending_3d   = None
@@ -449,7 +459,7 @@ class TunerWindow(QtWidgets.QMainWindow):
 
         if self.pair_submode == "match":
             # 1クリック: 最近傍の投影点を見つけ、現在の投影位置をペアとして登録
-            uv, _depth, idx = project(self.points, self.T, self.K)
+            uv, _depth, idx = project(self.points, self.T, self.K, project_fn=self.project_fn)
             if uv.shape[0] == 0:
                 return
             j = int(np.argmin(np.linalg.norm(uv - click, axis=1)))
@@ -464,7 +474,7 @@ class TunerWindow(QtWidgets.QMainWindow):
             # 相違点: 2クリック
             if self.pending_3d is None:
                 # 第1クリック: 最近傍の投影点の3D座標を保持
-                uv, _depth, idx = project(self.points, self.T, self.K)
+                uv, _depth, idx = project(self.points, self.T, self.K, project_fn=self.project_fn)
                 if uv.shape[0] == 0:
                     return
                 j = int(np.argmin(np.linalg.norm(uv - click, axis=1)))
@@ -490,9 +500,30 @@ class TunerWindow(QtWidgets.QMainWindow):
         img2d = np.array([p[1] for p in self.pairs], dtype=np.float64)
         rvec0 = cv2.Rodrigues(self.T[:3, :3])[0]
         tvec0 = self.T[:3, 3].reshape(3, 1)
-        # new_K で投影するため distCoeffs はゼロを明示
+
+        if self.project_fn is not None and self.distortion_model == "equidistant" and self.D is not None:
+            # fisheye は cv2.solvePnP の標準歪みモデルと非互換。
+            # fisheye.undistortPoints で img2d を正規化座標へ戻し、
+            # K=eye(3), D=zeros の solvePnP で解く。
+            D4 = self.D[:4].reshape(4, 1)
+            pts_norm = cv2.fisheye.undistortPoints(
+                img2d.reshape(-1, 1, 2).astype(np.float64), self.K, D4)
+            img2d_pnp = pts_norm.reshape(-1, 2)
+            K_pnp     = np.eye(3, dtype=np.float64)
+            D_pnp     = np.zeros((4, 1))
+        elif (self.project_fn is not None
+              and self.distortion_model == "rational_polynomial"
+              and self.D is not None):
+            img2d_pnp = img2d
+            K_pnp     = self.K
+            D_pnp     = self.D.reshape(-1, 1)
+        else:
+            img2d_pnp = img2d
+            K_pnp     = self.K
+            D_pnp     = np.zeros((4, 1))
+
         ok, rvec, tvec = cv2.solvePnP(
-            obj, img2d, self.K, np.zeros((4, 1)),
+            obj, img2d_pnp, K_pnp, D_pnp,
             rvec0, tvec0,
             useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE)
         if not ok:
@@ -538,8 +569,11 @@ class TunerWindow(QtWidgets.QMainWindow):
         obj = np.array([p[0] for p in self.pairs], dtype=np.float64)
         img = np.array([p[1] for p in self.pairs], dtype=np.float64)
         Xc  = (self.T[:3, :3] @ obj.T + self.T[:3, 3:4]).T
-        uvw = (self.K @ Xc.T).T
-        uv  = uvw[:, :2] / np.clip(uvw[:, 2:3], 1e-6, None)
+        if self.project_fn is not None:
+            uv = self.project_fn(Xc)
+        else:
+            uvw = (self.K @ Xc.T).T
+            uv  = uvw[:, :2] / np.clip(uvw[:, 2:3], 1e-6, None)
         return float(np.linalg.norm(uv - img, axis=1).mean())
 
     # ---------- 描画 ----------
@@ -556,7 +590,7 @@ class TunerWindow(QtWidgets.QMainWindow):
         self.ax.set_axis_off()
         self.ax.imshow(self.image)
 
-        uv, depth, idx = project(self.points, self.T, self.K)
+        uv, depth, idx = project(self.points, self.T, self.K, project_fn=self.project_fn)
         if uv.shape[0]:
             inb = ((uv[:, 0] >= 0) & (uv[:, 0] < self.w) &
                    (uv[:, 1] >= 0) & (uv[:, 1] < self.h))
@@ -617,21 +651,37 @@ def load_inputs(args):
         pts = raw[:, :3].astype(np.float64)
         intensity = raw[:, 3].astype(np.float64) if raw.shape[1] >= 4 else None
 
-    # カメラ行列 new_K: --cam-dir (camera_info.json) 優先、次に --K
+    # カメラ行列: --cam-dir (camera_info.json) 優先、次に --K
+    D_out = None
+    project_fn_out = None
+    distortion_model_out = "rational_polynomial"
+
     if args.cam_dir:
         cam_info = _load_camera_info(args.cam_dir)
         if cam_info is None:
             raise FileNotFoundError(f"camera_info.json が見つかりません: {args.cam_dir}")
         _K, _D, _W, _H, info_model, _P = cam_info
         _model = args.distortion_model or info_model
-        new_K, map1, map2, _ = build_undistort(_K, _D, _W, _H, _model, P=_P, fisheye_balance=None)
-        img = cv2.remap(img, map1, map2, cv2.INTER_LINEAR)
-        print(f"[tuner] camera_info: {_W}x{_H} model={_model} (undistort applied)", flush=True)
+        distortion_model_out = _model
+        new_K, map1, map2, dist_project_fn = build_undistort(
+            _K, _D, _W, _H, _model, P=_P, fisheye_balance=None)
+        if getattr(args, "distort", False):
+            # distort モード: 原画像をそのまま使い、歪みモデルで投影
+            K_out = _K
+            D_out = _D
+            project_fn_out = dist_project_fn
+            print(f"[tuner] camera_info: {_W}x{_H} model={_model} (distort mode, raw image)",
+                  flush=True)
+        else:
+            img = cv2.remap(img, map1, map2, cv2.INTER_LINEAR)
+            K_out = new_K
+            print(f"[tuner] camera_info: {_W}x{_H} model={_model} (undistort applied)",
+                  flush=True)
     elif args.K:
         if args.K.endswith(".npy"):
-            new_K = np.load(args.K).astype(np.float64)
+            K_out = np.load(args.K).astype(np.float64)
         else:
-            new_K = np.array(
+            K_out = np.array(
                 yaml.safe_load(Path(args.K).read_text()), dtype=np.float64
             ).reshape(3, 3)
     else:
@@ -659,7 +709,7 @@ def load_inputs(args):
     else:
         init_T = np.eye(4)
 
-    return img, pts, new_K, init_T, lidar_frame or "lidar", cam_frame, intensity
+    return img, pts, K_out, init_T, lidar_frame or "lidar", cam_frame, intensity, D_out, distortion_model_out, project_fn_out
 
 
 # ----------------------------------------------------------------------------
@@ -668,7 +718,8 @@ def load_inputs(args):
 def main():
     ap = argparse.ArgumentParser(description="LiDAR-Camera 外部パラメータ 手動調整GUI")
     ap.add_argument("--image",   required=True,
-                    help="カメラ画像 (image_raw / distort/ 等)。--cam-dir 使用時は自動的に歪み補正を適用")
+                    help="カメラ画像 (raw / distort/ / undistort/ 等)。"
+                         "--distort 未指定時は --cam-dir の情報で自動的に歪み補正を適用")
     ap.add_argument("--points",  required=True,
                     help="LiDAR 点群 (.npy Nx3 または extract_lidar_pcd.py 出力 .pcd)")
     ap.add_argument("--cam-dir", default=None,
@@ -692,14 +743,19 @@ def main():
                     help="YAML 出力のカメラ名 (省略時は --cam の値)")
     ap.add_argument("--out",     default="extrinsic_adjust.yaml",
                     help="出力 YAML パス (デフォルト: extrinsic_adjust.yaml)")
+    ap.add_argument("--distort", action="store_true",
+                    help="歪み補正なし(原画像)でチューニング。歪みモデルを使って点を投影する。"
+                         "--cam-dir 必須。equidistant 時の solvePnP は近似になる")
     args = ap.parse_args()
 
-    img, pts, K, init_T, lidar_frame, cam_frame, intensity = load_inputs(args)
+    img, pts, K, init_T, lidar_frame, cam_frame, intensity, D, distortion_model, project_fn = \
+        load_inputs(args)
 
     app = QtWidgets.QApplication(sys.argv)
     win = TunerWindow(img, pts, K, init_T, args.out,
                       lidar_frame=lidar_frame, cam_frame=cam_frame,
-                      intensity=intensity)
+                      intensity=intensity,
+                      D=D, distortion_model=distortion_model, project_fn=project_fn)
     win.resize(1280, 760)
     win.show()
     sys.exit(app.exec())
